@@ -1,0 +1,260 @@
+---
+title: "Berries Project"
+author: "Chenghao Meng"
+date: "2020/10/11"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## 1 Data Cleaning
+### 1.1 Data Import
+```{r}
+# Import necessary packages
+pacman::p_load("tidyverse")
+```
+
+By downloading data from the National Agriculture Statistics Service (NASS) of United States Department of Agriculture(USDA), we have the dataset containinig information about three types of berries: Blueberries, Strawberries and Raspberries. 
+
+Since there are only 8 out 21 columns that are useful for further analysis, we will drop those first for simplicity of the dataset.
+```{r}
+# Read in the file
+dt <- read.csv(file="C:/Users/CH.Meng/Desktop/berries.csv",header=T)
+berry_raw <- dt %>%
+  select(Year,Period,State,Commodity,Data.Item,Domain,Domain.Category,Value)
+head(berry_raw)
+```
+
+### 1.2 Initial Screening of the Data
+
+From the output above, we can notice that there are a lot of categorical varibles. However, `Value` is supposed to be a numeric varible according to the defination on the website.
+
+By looking at the column of `Value`, many (D),(NA),(X) and (Z) appears to be the reason why this column is defined as categorical. So, we will replace those with NA.
+
+```{r warning=FALSE}
+berry_raw$Value <- as.numeric(berry_raw$Value)
+# Replace (D),(NA),(X) and (Z) with NA
+berry_raw[berry_raw =="(D)"] <- NA
+berry_raw[berry_raw =="(NA)"] <- NA
+berry_raw[berry_raw =="(X)"] <- NA
+berry_raw[berry_raw =="(Z)"] <- NA
+```
+
+Since those irregular "NA"s have been replaced, a summary of the dataset should be made for further exploration of the data.
+```{r}
+# Summary of berry_raw
+summary(berry_raw)
+```
+
+### 1.3 Further Data Cleaning on Strawberries
+After finishing the initial screening of the dataset, we use the `filter` function to extract data of strawberries to conduct further study.
+
+```{r}
+strawberry_raw <- berry_raw %>%
+  filter(Commodity=="STRAWBERRIES")
+# Summary of the dataset
+summary(strawberry_raw)
+```
+
+The summary of the strawberry dataset shows that there are 4958 NAs in the column `Value`. Since those observations does not contain much information, we choose to delete them.
+
+#### 1.3.1 Cleaning: `Data Item`
+```{r}
+strawberry_raw2 <- strawberry_raw %>% drop_na()
+```
+
+```{r}
+item_pre <- strawberry_raw2$Data.Item
+# Replace "-" with "," for the convenience of spliting
+item <- gsub(" - ",",",item_pre)
+```
+
+Now, we use regular expression to extract the measurement and the type of the berry.
+```{r}
+# Measurement of the strawberry
+unit_stberry <- str_extract_all(item,"MEASURED.*[^./AVG]|ACRES.*")
+# Delete the comma and space
+unit_stberry <- str_replace(unit_stberry, ",","")
+unit_stberry <- trimws(unit_stberry)
+```
+
+By looking at the original dataset, we find that there is only one strawberry type in the dataset, and we also extract them by using regular expression.
+
+```{r}
+# Market Channel of the strawberry
+market_stberry <- str_extract_all(item,"(FRESHMARKET)|(PROCESSING)")
+
+col_market_stberry <- data.frame(Market.Channel=as.character(market_stberry))
+col_market_stberry[col_market_stberry=="character(0)"] <- NA
+```
+
+#### 1.3.2 Cleaning: `Domain Category`
+Then, we will separate the chemical type and the detail of certain kind of chemical from the column `Domain Category` by using `separate` function in tidyverse package.
+
+```{r warning=FALSE}
+chemical_obj <- data.frame(strawberry_raw2$Domain.Category)
+chemical_info <- separate(data=chemical_obj, col=colnames(chemical_obj), into = c("Chemical.Type", "Chemical.Detail"), sep = ",")
+head(chemical_info)
+```
+
+## 1.4 Cleaned Dataset: Inforamtion of Strawberries
+
+Now we have the final dataset for further exploration by using `select` and `mutate` function in tidyverse package.
+```{r}
+stberry <- strawberry_raw2 %>% 
+  select(Year,State,Commodity,Value) %>% 
+  mutate(Unit=as.character(unit_stberry),chemical_info,col_market_stberry)
+head(stberry)
+```
+
+## 2 Exploratory Data Analysis
+
+### 2.1 Measurements of Strawberry
+#### 2.1.1 Count the Types of Measurement
+
+After cleaning the data, we will first count the types for measurement of the strawberry.
+
+```{r warning=FALSE}
+# Summary of the measurement for strawberry
+stberry_unit_sum <- stberry %>%
+  group_by(Unit)%>%
+  summarize(
+    Count=n(),
+    Mean.Value=round(mean(Value),2)
+    )
+
+cat(paste("There are",length(stberry_unit_sum$Unit),"types of measurements for strawberry in the dataset."))
+```
+
+The we will make a bar plot to identify the frequency of different measurements for strawberry.
+```{r}
+# Bar Plot: Measurement of stberry
+ggplot(data=stberry_unit_sum,mapping=aes(x=Unit,y=Count))+
+  geom_bar(stat='identity',fill="sky blue")+
+  ggtitle("Measurements of Strawberry")+
+  geom_text(aes(label=Count,y=Count+14),size=5,color="navy blue") +
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+From the bar plot, we can see that *Measured in PCT of area bearing* is mostly used for 272 times, and *Measured in $/Ton* is leastly used for only 4 times in the strawberry dataset.
+
+#### 2.1.2 Plot the Value of Measurements
+```{r}
+# Plot: mean value of the measurements
+ggplot(data=stberry_unit_sum, mapping=aes(x = Unit, y= Count,size=Mean.Value)) +
+  geom_point(shape=20,color="sky blue")+
+  xlab("Measurements") + 
+  ylab("Mean Value:Each Measurments")+
+  theme(axis.text.x = element_text(angle = 45, hjust = 1))
+```
+
+This scatterplot indicates that there are big variation between each measurements, which proved that the data cleaning in previous sections is very necessary to make different numbers comparible.
+
+### 2.2 Plot Different Measurement
+
+To make the plot of different measurement versus other varibles in the dataset, `group_by` function should be used to generate the data frame for further use. 
+```{r}
+# Group by "Unit"
+stberry_unit_df <- stberry %>%
+  group_by(Unit) %>%
+  summarize(
+    States=State,
+    Years= Year,
+    Count=n(),
+    Values=Value
+    )
+tail(stberry_unit_df)
+```
+```{r eval=FALSE, include=TRUE}
+# Output the cleaned dataset for Shiny buidling
+write.csv(stberry_unit_df,file="C:/Users/CH.Meng/Desktop/stberry unit.csv",row.names = FALSE)
+```
+
+#### 2.2.1 Measurement: *Measured in Number*
+
+To explore the status of value measured in Number, a data frame should to created for the convenience of `ggplot` function.
+```{r}
+# Generate a dataframe of Measurement: Measured in Number
+df_measur_in_number <- stberry_unit_df %>% 
+  filter(Unit=="MEASURED IN NUMBER") %>% 
+  group_by(States,Years) %>%
+  summarise(Number_Total=sum(Values))
+df_measur_in_number
+```
+
+Now, We draw a plot of Total Numbers v.s. Year.
+```{r}
+ggplot(data=df_measur_in_number)+
+  geom_line(mapping=aes(x=Years,y=Number_Total,color=States))+
+  geom_point(mapping=aes(x=Years,y=Number_Total,color=States))+
+  scale_color_manual(values = c("navy blue","sky blue","light green"))+ # Change the color of the legend
+  xlab("Year") + ylab("Numbers in Total") + 
+  ggtitle("Measurement: Measured in Number")
+```
+
+The plot above shows that the total number of strawberry in California and Florida keep growing from 2016 to 2019. Meanwhile, the total number of strawberry in California is larger than that in Florida.
+
+#### 2.2.2 Measurement: *Measured in LB*
+
+Now, we can include the value measured by LB into a dataframe for the convenience of plotting.
+
+```{r}
+df_measur_in_lb <- stberry_unit_df %>% 
+  filter(Unit=="MEASURED IN LB") %>% 
+  group_by(States,Years) %>%
+  summarise(LB_Total=sum(Values))
+df_measur_in_lb
+```
+
+
+```{r}
+# Plot Total LB v.s. Year
+ggplot(data=df_measur_in_lb)+
+  geom_line(mapping=aes(x=Years,y=LB_Total,color=States))+
+  geom_point(mapping=aes(x=Years,y=LB_Total,color=States))+
+  scale_color_manual(values = c("navy blue","sky blue","light green","dark green"))+ # Change the color of the legend
+  xlab("Year") + ylab("LB in Total") + 
+  ggtitle("Measurement: Measured in LB")
+```
+
+The plot shows that the state of California has the total weight measured by LB, but it expereinced a sharp drop in the year of 2019.
+
+#### 2.2.3 Measurement: `Measured in $/CWT`
+
+Then, we will explore the price of the strawberry by adopting the same methods above.
+
+```{r}
+df_measur_price_cwt <- stberry_unit_df %>% 
+  filter(Unit=="MEASURED IN $ / CWT") %>% 
+  group_by(States,Years) %>%
+  summarise(Average_Dollar_in_CWT=mean(Values))
+head(df_measur_price_cwt)
+```
+
+```{r}
+ggplot(data=df_measur_price_cwt)+
+  geom_point(mapping=aes(x=Years,y=Average_Dollar_in_CWT,color=States,size=Average_Dollar_in_CWT))+
+   scale_color_manual(values = c("navy blue","sky blue","light green","dark green","pink","orange","dark orange","cornsilk","cornsilk2","cornsilk3","brown"))+
+  xlab("Year") + ylab("Average $/CWT") + 
+  ggtitle("Measurement: Measured in $/CWT")
+```
+
+From the plot, we can see that the average price in $/CWT in State of New York is always the highest among other states from 2015 to 2019. 
+
+Moreover, the average price of strawberry in state of California is realtively low compared to other states.
+
+## 3 Recommendation
+
+According to the analysis above, the state of California is the best place to buy strawberries with the advantages of the highest production and the lowest price compared to other states. 
+
+However, since not every state has values for all unit of measurements, this recommendation is not very solid. For example, the production information measured by *Numbers* and *LB* is not included in the dataset. This recommendation can be seen as a reference when choosing the place to purchase strawberries.
+
+## 4 Reference
+
+[1]Hadley Wickham, Romain François, Lionel Henry, Kirill Müller.(2020) dplyr: A Grammar of Data Manipulation, version 1.0.2
+
+[2]Hadley Wickham.(2019) tidyverse: Easily Install and Load the ‘Tidyverse’, version 1.3.0
+
+[3]Alboukadel Kassambara.(2020) ggpubr: ‘ggplot2’ Based Publication Ready Plots, version 0.4.0
